@@ -1,6 +1,6 @@
 import numpy as np
 import tensorly as tl
-from ..tensors.cp_tensor import CPTensor
+from tensors.cp_tensor import CPTensor, get_random_CP_tensor
 from exceptions import NumericalError
 
 class CompressionInfo:
@@ -16,7 +16,7 @@ class CompressionInfo:
         computing time for each iteration during the run
     F_cond: list of floats
         condition numbers of F in each iteration during the run
-    error : list of floats
+    errors : list of floats
         errors in each iteration during the run
     iter_with_rank_inc: list of ints
         iterations where the rank of F is increased
@@ -27,7 +27,7 @@ class CompressionInfo:
         self.n_iter = 0
         self.t_step = []
         self.F_cond = []
-        self.error = []
+        self.errors = []
         self.iter_with_rank_inc = []
 
 class Compressor:
@@ -39,7 +39,7 @@ class Compressor:
 
     Parameters
     ----------
-    acc : float, required
+    accuracy : float, required
         desired accuracy
     n_iter_max : int, optional, default is 2000
         max number of iterations
@@ -53,15 +53,14 @@ class Compressor:
         whether to print debugging information
     """
 
-    def __init__(self, acc, n_iter_max=2000, min_error_dec=1e-3, alpha=1e-14,
+    def __init__(self, accuracy, n_iter_max=2000, min_error_dec=1e-3, alpha=1e-14,
             display_progress=False, verbose=False):
-        self.acc = acc
+        self.accuracy = accuracy
         self.n_iter_max = n_iter_max
         self.min_error_dec = min_error_dec
         self.alpha = alpha
         self.display_progress = display_progress
         self.verbose = verbose
-        self.G = None
 
     def get_params(self, **kwargs):
         """ Returns a dictionary of parameters. """
@@ -75,17 +74,13 @@ class Compressor:
             setattr(self, param, value)
         return self
 
-    def set_tensor(self, G):
-        assert type(G) is CPTensor, "wrong type, not CPTensor"
-        self.G = G
-        self.G.arrange()
-
-    def compress(initial_guess=None):
+    def compress(self, G, initial_guess=None):
         """
         Tries to find a lower rank approximation for G within accuracy.
 
         Parameters
         ----------
+        G : the CPTensor to be approximated
         initial_guess : initial guess of F, default is a random rank-1 tensor
         
         Returns
@@ -96,41 +91,88 @@ class Compressor:
             Gives additional information about the compression run
         
         """
+        assert isinstance(G, CPTensor), "wrong type, not CPTensor"
+        G.arrange()
+
         if initial_guess is None:
             F = get_random_CP_tensor(G.dim, 1)
         else:
             F = initial_guess
 
         info = CompressionInfo()
-        for info.n_iter in xrange(n_iter_max):
+        for info.n_iter in xrange(self.n_iter_max):
             # TODO: time the operations
             try:
-                F = compress_onestep(F)
+                F = self.compress_onestep(G, F)
             except NumericalError:
                 print "ALS matrix inversion ill-conditioned, returning after \
                         iteration %d" % iteration
                 info.ill_conditioned = True
                 return F, info
-            
             F.arrange()
             info.F_cond.append(np.linalg.norm(F.lambdas) / F.norm())
-            info.errors.append(self.G.minus(F).norm() / self.G.norm())
+            info.errors.append(G.minus(F).norm() / G.norm())
 
-            if display_progress:
-                print "Iteration %d, error = %2.3f" % (info.n_iter, error)
+            if self.display_progress:
+                print "Iteration %d, error = %2.3f" % (info.n_iter,
+                        info.errors[-1])
 
-            if info.errors[-1] <= acc:
+            if info.errors[-1] <= self.accuracy:
                 info.success = True
                 return F, info
             
-            if np.abs(info.errors[-1] - info.errors[-2]) / info.errors[-2] < \
+            if info.n_iter > 1 and \
+                    np.abs(info.errors[-1] - info.errors[-2]) / info.errors[-2] < \
                     self.min_error_dec:
 
-                if F.rank == self.G.rank - 1:
+                if F.rank == G.rank - 1:
                     info.errors[-1] = 0
-                    return self.G, info
+                    return G, info
 
-                F = F.add(get_random_CP_tensor(F.dim,1))
-                info.iter_with_rank_inc.append(iteration) 
+                F = F.plus(get_random_CP_tensor(F.dim,1))
+                info.iter_with_rank_inc.append(info.n_iter) 
         
         return G, info
+
+    def compress_onestep(self, G, F):
+        """ One step of the ALS algorithm (iterates through all dimensions)
+        """
+
+        # FF[m, i, j] = <F_m^i, F_m^j>
+        FF = np.zeros((len(F.dim), F.rank, F.rank))
+        for m in xrange(len(F.dim)):
+            FF[m, :, :] = np.dot(F.factors[m].transpose(), F.factors[m])
+        # GF[m, i, j] = <G_m^i, F_m^j>
+        GF = np.zeros((len(F.dim), G.rank, F.rank))
+        for m in xrange(len(F.dim)):
+            GF[m, :, :] = np.dot(G.factors[m].transpose(), F.factors[m])
+
+        for k in xrange(len(F.dim)):
+            idx = range(0, k) + range(k+1, len(F.dim)) 
+            # M[i,j] = Prod_{m != k} <F_m^i, F_m^j>
+            # M has shape F.rank x F.rank
+            M = np.prod(FF[idx,:,:], axis=0)
+            # M += alpha * Identity for regularization
+            M += self.alpha * np.eye(F.rank)
+            # multiply lambda into kth factor
+            Gk = G.lambdas.reshape(1,-1) * G.factors[k]
+            # N[i] = Sum_{j=1...G.rank} G_k^j Prod_{m != k} <F_m^i, G_m^j>
+            # N has shape F.rank x M_k
+            N = np.dot(Gk, np.prod(GF[idx,:,:], axis=0)).transpose()
+
+            if np.linalg.cond(M) > 1e13:
+                raise NumericalError("matrix ill-conditioned")
+
+            # normalize each column of Fk
+            Fk = np.linalg.solve(M, N).transpose()
+            # Fk has shape M_k x F.rank
+            Fk_norm = np.linalg.norm(Fk, axis=0)
+            F.factors[k] = Fk / Fk_norm.reshape(1,-1)
+            F.lambdas = Fk_norm
+
+            # update inner product in FF and GF
+            FF[k,:,:] = np.dot(F.factors[k].transpose(), F.factors[k])
+            GF[k,:,:] = np.dot(G.factors[k].transpose(), F.factors[k])
+        
+        return F
+
