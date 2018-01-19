@@ -9,17 +9,28 @@ class CPTensor:
     """
     def __init__(self, factors, lambdas=None):
         self.factors = factors
-        self.rank = factors[0].shape[1]
+        try:
+            self.rank = factors[0].shape[1]
+        except IndexError:
+            print "factors must be a list of 2D arrays"
+            raise IndexError
+
         if lambdas is None:
             self.lambdas = np.ones(self.rank)
         else:
             assert type(lambdas) is np.ndarray
             assert lambdas.shape == (self.rank, )
             self.lambdas = lambdas
+
         self.dim = []
         for f in factors:
             assert f.shape[1] == self.rank, "wrong array dimensions"
             self.dim.append(f.shape[0])
+
+    def get_full_tensor(self):
+        return tl.kruskal_to_tensor(
+                self.factors[:-1] + \
+                [self.factors[-1] * self.lambdas.reshape(1,-1)])
 
     def norm(self):
         """ Returns the Frobenius norm of a CP-tensor """
@@ -36,9 +47,9 @@ class CPTensor:
         """
         for i in xrange(len(self.factors)):
             scale = np.linalg.norm(self.factors[i], axis=0)
-            self.lambdas *= scale
-            # TODO: handle zeros in scale more carefully
-            self.factors[i] /= scale
+            self.lambdas = self.lambdas * scale
+            self.factors[i] = np.nan_to_num(
+                    self.factors[i] / scale.reshape(1,-1))
 
     def arrange(self):
         """ Normalizes the columns of the factor matrices and then sorts the
@@ -50,20 +61,19 @@ class CPTensor:
         for i in xrange(len(self.factors)):
             self.factors[i] = self.factors[i][:,perm]
 
-    def add(self, B):
+    def plus(self, B):
         """ Computes self + B, where B is a CPTensor of the same dim """
-        assert type(B) is CPTensor, "wrong type, not a CPTensor"
+        assert isinstance(B, CPTensor), "wrong type, not a CPTensor"
         assert np.array_equal(self.dim, B.dim), "tensor dimension mismatch"
         concat_factors = [np.concatenate(
-            self.factors[i], B.factors[i], axis=1) \
+            (self.factors[i], B.factors[i]), axis=1) \
                     for i in xrange(len(self.factors))]
         return CPTensor(concat_factors,
-                np.concatenate(self.lambdas, B.lambdas))
+                np.concatenate((self.lambdas, B.lambdas)))
 
     def minus(self, B):
         """ Computes self - B, where B is a CPTensor of the same dim """
-        B.lambdas = -B.lambdas
-        return self.add(B)
+        return self.plus(CPTensor(B.factors, -B.lambdas))
 
 def get_random_CP_tensor(dim, rank):
     """ Generates a random CP tensor of the specified rank and dimensions.
