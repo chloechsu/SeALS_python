@@ -1,4 +1,5 @@
 import numpy as np
+import time
 import tensorly as tl
 from tensors.cp_tensor import CPTensor, get_random_CP_tensor
 from exceptions import NumericalError
@@ -13,7 +14,7 @@ class CompressionInfo:
     n_iter: int
         number of iterations
     t_step : lsit of floats
-        computing time for each iteration during the run
+        computing time (in seconds) for each iteration during the run
     F_cond: list of floats
         condition numbers of F in each iteration during the run
     errors : list of floats
@@ -25,8 +26,11 @@ class CompressionInfo:
         self.ill_conditioned = False
         self.success = False
         self.n_iter = 0
-        self.t_step = []
+        # t_step starts from iteration 1
+        self.t_step = [np.nan]
+        # self.F_cond[0] is the condition number for initial guess
         self.F_cond = []
+        # self.errors[0] is the error for initial guess
         self.errors = []
         self.iter_with_rank_inc = []
 
@@ -100,28 +104,20 @@ class Compressor:
             F = initial_guess
 
         info = CompressionInfo()
+
         for info.n_iter in xrange(self.n_iter_max):
-            # TODO: time the operations
-            try:
-                F = self.compress_onestep(G, F)
-            except NumericalError:
-                print "ALS matrix inversion ill-conditioned, returning after \
-                        iteration %d" % iteration
-                info.ill_conditioned = True
-                return F, info
+
             F.arrange()
             info.F_cond.append(np.linalg.norm(F.lambdas) / F.norm())
             info.errors.append(G.minus(F).norm() / G.norm())
-
             if self.display_progress:
-                print "Iteration %d, error = %2.3f" % (info.n_iter,
+                print "error = %2.3f, starting iteration %d.." % (info.n_iter,
                         info.errors[-1])
-
             if info.errors[-1] <= self.accuracy:
                 info.success = True
                 return F, info
-            
-            if info.n_iter > 1 and \
+
+            if info.n_iter >= 1 and \
                     np.abs(info.errors[-1] - info.errors[-2]) / info.errors[-2] < \
                     self.min_error_dec:
 
@@ -132,6 +128,16 @@ class Compressor:
                 F = F.plus(get_random_CP_tensor(F.dim,1))
                 info.iter_with_rank_inc.append(info.n_iter) 
         
+            try:
+                start_time = time.clock()
+                F = self.compress_onestep(G, F)
+                info.t_step.append(time.clock() - start_time)
+            except NumericalError:
+                print "ALS matrix inversion ill-conditioned, returning after \
+                        iteration %d" % info.n_iter
+                info.ill_conditioned = True
+                return G, info
+
         return G, info
 
     def compress_onestep(self, G, F):
