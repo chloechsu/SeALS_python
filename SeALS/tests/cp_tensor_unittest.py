@@ -1,5 +1,5 @@
 import unittest
-from tensors.cp_tensor import get_random_CP_tensor, CPTensor
+from tensors.cp_tensor import get_random_CP_tensor, CPTensor, CPTensorOperator
 import numpy as np
 import tensorly as tl
 from tensorly.decomposition import parafac
@@ -82,6 +82,28 @@ class TestCPTensorMethods(unittest.TestCase):
             H = get_random_CP_tensor(dim, np.random.randint(1, rank+1)) 
             G_minus_H = np.copy(G.get_full_tensor() + H.get_full_tensor())
             self.assertArrayAlmostEqual(G_minus_H, G.plus(H).get_full_tensor())
+
+    def test_multiplication(self, repeats=10):
+        for t in xrange(repeats):
+            dim_rhs, rank_rhs = self.get_random_dim_and_rank()
+            dim_result = [np.random.randint(1, 5) for i in xrange(len(dim_rhs))]
+            B = get_random_CP_tensor(dim_rhs, rank_rhs)
+            rank_op = np.random.randint(1, 5)
+            op = CPTensorOperator([np.random.rand(dim_result[i], dim_rhs[i],
+                rank_op) for i in xrange(len(dim_rhs))])
+            
+            # perform naive multiplication
+            op_array = op.tensor.get_full_tensor()
+            B_array = B.get_full_tensor()
+            op_mult_B = np.zeros(dim_result)
+            for i in np.ndindex(*dim_result):
+                for j in np.ndindex(*dim_rhs):
+                    ind_op = tuple([i[d]*dim_rhs[d]+j[d] for d in \
+                        xrange(len(dim_rhs))])
+                    op_mult_B[i] += op_array[ind_op] * B_array[j]
+            
+            self.assertArrayAlmostEqual(op_mult_B,
+                    op.multiply(B).get_full_tensor())
 
     def runTest(self):
         self.test_get_random_CP_tensor()

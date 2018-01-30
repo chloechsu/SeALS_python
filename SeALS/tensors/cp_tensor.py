@@ -1,6 +1,46 @@
 import tensorly as tl
 import numpy as np
 
+class CPTensorOperator:
+    """ A wrapper around CPTensor to represent operators.
+        If A is a rank R tensor operator mapping tensors of dim I1 x ... x In to
+        tensors of dim I1' x ... x In',
+        the corresponding CPTensor object has dim (I1' x I1) x ... x (In' x In).
+    """
+    def __init__(self, factors, lambdas=None):
+        try:
+            self.rank = factors[0].shape[2]
+        except IndexError:
+            print "factors must be a list of 3D arrays"
+            raise IndexError
+
+        factors_flat = []
+        self.dim = []
+        for f in factors:
+            assert len(f.shape) == 3 and f.shape[2] == self.rank, \
+                "factors must be a list of 3D arrays of dimension I_d' x I_d x R"
+            self.dim.append((f.shape[0], f.shape[1]))
+            factors_flat.append(f.reshape(f.shape[0] * f.shape[1], self.rank))
+
+        self.tensor = CPTensor(factors_flat, lambdas)
+
+    def multiply(self, B):
+        """ B must be a tensor of dim I1 x ... x In
+            The multiplication results in a tensor of dim I1' x ... x In'
+        """
+        assert isinstance(B, CPTensor), "wrong type, not a CPTensor"
+        assert np.array_equal([t[1] for t in self.dim], B.dim), \
+            "dimensions do not match"
+        factors = []
+        for d in xrange(len(self.dim)):
+            f = np.zeros((self.dim[d][0], self.rank * B.rank))
+            for i in range(self.rank):
+                operator = self.tensor.factors[d][:,i].reshape(self.dim[d]),
+                f[:, i*B.rank:(i+1)*B.rank] = np.dot(operator, B.factors[d])
+            factors.append(f)
+        lambdas = np.outer(self.tensor.lambdas, B.lambdas).flatten()
+        return CPTensor(factors, lambdas)
+
 class CPTensor:
     """ A light wrapper around list of NDArrays to represent CP tensors.
         If G is a rank R tensor of dim I1 x I2 x ... x In,
