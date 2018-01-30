@@ -27,13 +27,15 @@ class Compressor:
 
         Parameters
         ----------
-        G : the CPTensor to be approximated
-        initial_guess : initial guess of F, default is a random rank-1 tensor
+        G : CPTensor
+            The CPTensor to be approximated
+        initial_guess : CPTensor
+            Initial guess of F, default is a random rank-1 tensor
         
         Returns
         -------
         F : CPTensor
-            Low rank approximation of G, represented by a list of factors.
+            Low rank approximation of G
         info : SolverInfo
             Gives additional information about the compression run
         
@@ -44,6 +46,8 @@ class Compressor:
         if initial_guess is None:
             F = get_random_CP_tensor(G.dim, 1)
         else:
+            assert np.array_equal(F.dim, G.dim), \
+                    "Dimensions do not match"
             F = initial_guess
 
         info = SolverInfo()
@@ -60,6 +64,7 @@ class Compressor:
                 info.success = True
                 return F, info
 
+            # Increase rank if error decreases less than tol_error_dec
             if info.n_iter >= 1 and \
                     np.abs(info.errors[-1] - info.errors[-2]) / info.errors[-2] < \
                     self.options.tol_error_dec:

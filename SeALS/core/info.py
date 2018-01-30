@@ -40,6 +40,8 @@ class ALSOptions:
         self.n_iter_max = n_iter_max
         self.tol_error_dec = tol_error_dec
         self.alpha = alpha
+        assert error_type == 'average' or error_type == 'total', \
+                "unknown error type"
         self.error_type = error_type
         self.tol_error_dec_precond = tol_error_dec_precond
         self.n_iter_max_precond = n_iter_max_precond
