@@ -3,7 +3,8 @@ import numpy as np
 import tensorly as tl
 from tensorly.decomposition import parafac
 from tensors.cp_tensor import get_random_CP_tensor, CPTensor
-from core.compression import Compressor, CompressionInfo
+from core.compression import Compressor
+from core.info import ALSOptions
 from core.exceptions import NumericalError
 
 class TestCompression(unittest.TestCase):
@@ -26,7 +27,8 @@ class TestCompression(unittest.TestCase):
             dim, rank = self.get_random_dim_and_rank()
             G = get_random_CP_tensor(dim, rank)
             G_plus_G = G.plus(G)
-            c = Compressor(accuracy=accuracy, min_error_dec=1e-2)
+            opts = ALSOptions(accuracy=accuracy, tol_error_dec=1e-2)
+            c = Compressor(opts)
             F, info = c.compress(G_plus_G)
             if info.ill_conditioned:
                 # retry if the matrix becomes ill-conditioned during ALS
@@ -45,7 +47,8 @@ class TestCompression(unittest.TestCase):
             dim, rank = self.get_random_dim_and_rank()
             G = get_random_CP_tensor(dim, rank)
             G_plus_G = G.plus(G)
-            c = Compressor(accuracy=accuracy)
+            opts = ALSOptions(accuracy=accuracy)
+            c = Compressor(opts)
             F, info = c.compress(G_plus_G, CPTensor(G.factors, 2*G.lambdas))
             self.assertLessEqual(F.minus(G_plus_G).norm() / G_plus_G.norm(), 
                     accuracy)

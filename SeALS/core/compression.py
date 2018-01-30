@@ -3,36 +3,7 @@ import time
 import tensorly as tl
 from tensors.cp_tensor import CPTensor, get_random_CP_tensor
 from exceptions import NumericalError
-
-class CompressionInfo:
-    """ Additional info about a compression run.
-
-    Variables
-    ------
-    ill_conditioned : bool
-        whether the ALS matrices were ill-conditioned at any step
-    n_iter: int
-        number of iterations
-    t_step : lsit of floats
-        computing time (in seconds) for each iteration during the run
-    F_cond: list of floats
-        condition numbers of F in each iteration during the run
-    errors : list of floats
-        errors in each iteration during the run
-    iter_with_rank_inc: list of ints
-        iterations where the rank of F is increased
-    """
-    def __init__(self):
-        self.ill_conditioned = False
-        self.success = False
-        self.n_iter = 0
-        # t_step starts from iteration 1
-        self.t_step = [np.nan]
-        # self.F_cond[0] is the condition number for initial guess
-        self.F_cond = []
-        # self.errors[0] is the error for initial guess
-        self.errors = []
-        self.iter_with_rank_inc = []
+from info import SolverInfo, ALSOptions
 
 class Compressor:
     """
@@ -43,40 +14,12 @@ class Compressor:
 
     Parameters
     ----------
-    accuracy : float, required
-        desired accuracy
-    n_iter_max : int, optional, default is 2000
-        max number of iterations
-    min_error_dec : float, optional, default is 1e-3
-        minimum decrease for error
-        (the compressor adds rank when error decrease is below this threshold)
-    alpha : float, optional, default is 1e-14
-        regularization coefficient
-    display_progress : bool, optional, default is false
-    verbose : bool, optional, default is false
-        whether to print debugging information
+    options : an instance of ALSOptions 
     """
 
-    def __init__(self, accuracy, n_iter_max=2000, min_error_dec=1e-3, alpha=1e-14,
-            display_progress=False, verbose=False):
-        self.accuracy = accuracy
-        self.n_iter_max = n_iter_max
-        self.min_error_dec = min_error_dec
-        self.alpha = alpha
-        self.display_progress = display_progress
-        self.verbose = verbose
-
-    def get_params(self, **kwargs):
-        """ Returns a dictionary of parameters. """
-        params = ['n_iter_max', 'min_error_dec', 'alpha', 
-                'display_progress', 'verbose']
-        return {param_name: getattr(self, param_name) for param_name in params}
-
-    def set_params(self, **params):
-        """ Sets the value of the provided parameters. """
-        for param, value in params.items():
-            setattr(self, param, value)
-        return self
+    def __init__(self, options):
+        assert isinstance(options, ALSOptions), "must intialize with ALSOptions"
+        self.options = options
 
     def compress(self, G, initial_guess=None):
         """
@@ -91,7 +34,7 @@ class Compressor:
         -------
         F : CPTensor
             Low rank approximation of G, represented by a list of factors.
-        info : CompressionInfo
+        info : SolverInfo
             Gives additional information about the compression run
         
         """
@@ -103,23 +46,23 @@ class Compressor:
         else:
             F = initial_guess
 
-        info = CompressionInfo()
+        info = SolverInfo()
 
-        for info.n_iter in xrange(self.n_iter_max):
+        for info.n_iter in xrange(self.options.n_iter_max):
 
             F.arrange()
             info.F_cond.append(np.linalg.norm(F.lambdas) / F.norm())
             info.errors.append(G.minus(F).norm() / G.norm())
-            if self.display_progress:
+            if self.options.verbose:
                 print "error = %2.3f, starting iteration %d.." % (info.n_iter,
                         info.errors[-1])
-            if info.errors[-1] <= self.accuracy:
+            if info.errors[-1] <= self.options.accuracy:
                 info.success = True
                 return F, info
 
             if info.n_iter >= 1 and \
                     np.abs(info.errors[-1] - info.errors[-2]) / info.errors[-2] < \
-                    self.min_error_dec:
+                    self.options.tol_error_dec:
 
                 if F.rank == G.rank - 1:
                     info.errors[-1] = 0
@@ -159,7 +102,7 @@ class Compressor:
             # M has shape F.rank x F.rank
             M = np.prod(FF[idx,:,:], axis=0)
             # M += alpha * Identity for regularization
-            M += self.alpha * np.eye(F.rank)
+            M += self.options.alpha * np.eye(F.rank)
             # multiply lambda into kth factor
             Gk = G.lambdas.reshape(1,-1) * G.factors[k]
             # N[i] = Sum_{j=1...G.rank} G_k^j Prod_{m != k} <F_m^i, G_m^j>
