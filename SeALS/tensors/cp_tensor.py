@@ -1,5 +1,6 @@
 import tensorly as tl
 import numpy as np
+from copy import deepcopy
 
 class CPTensorOperator:
     """ A wrapper around CPTensor to represent operators.
@@ -41,6 +42,14 @@ class CPTensorOperator:
         lambdas = np.outer(self.tensor.lambdas, B.lambdas).flatten()
         return CPTensor(factors, lambdas)
 
+    def display(self):
+        print "CPTensorOperator with the following factors:"
+        for i, f in enumerate(self.tensor.factors):
+            print f.reshape(self.dim[i][0], self.dim[i][1])
+        print "and lambdas:"
+        print self.tensor.lambdas
+        print ""
+
 class CPTensor:
     """ A light wrapper around list of NDArrays to represent CP tensors.
         If G is a rank R tensor of dim I1 x I2 x ... x In,
@@ -48,7 +57,8 @@ class CPTensor:
         I1 x R, I2 x R, ... , In x R. 
     """
     def __init__(self, factors, lambdas=None):
-        self.factors = factors
+        # use copy to make sure that a new list instance is created
+        self.factors = deepcopy(factors)
         try:
             self.rank = factors[0].shape[1]
         except IndexError:
@@ -60,7 +70,13 @@ class CPTensor:
         else:
             assert type(lambdas) is np.ndarray
             assert lambdas.shape == (self.rank, )
-            self.lambdas = lambdas
+            # use copy to make sure that a new instance is created
+            self.lambdas = np.copy(lambdas)
+            # flip signs to make sure lambdas are all positive
+            for i in xrange(self.rank):
+                if self.lambdas[i] < 0:
+                    self.factors[0][:, i] *= -1.0
+                    self.lambdas[i] = -self.lambdas[i]
 
         self.dim = []
         for f in factors:
@@ -91,6 +107,15 @@ class CPTensor:
             self.factors[i] = np.nan_to_num(
                     self.factors[i] / scale.reshape(1,-1))
 
+    def distribute_lambda(self):
+        """ Distributes the lambdas evenly across all factors.
+        """
+        assert np.all(self.lambdas >= 0)
+        scaling = np.diag(np.power(self.lambdas, (1.0/len(self.dim))))
+        for i in xrange(len(self.factors)):
+            self.factors[i] = np.dot(self.factors[i], scaling)
+        self.lambdas = np.ones(self.rank)
+
     def arrange(self):
         """ Normalizes the columns of the factor matrices and then sorts the
         tensor components by magnitude, greatest to least.
@@ -114,6 +139,14 @@ class CPTensor:
     def minus(self, B):
         """ Computes self - B, where B is a CPTensor of the same dim """
         return self.plus(CPTensor(B.factors, -B.lambdas))
+    
+    def display(self):
+        print "CPTensor with the following factors:"
+        for f in self.factors:
+            print f
+        print "and lambdas:"
+        print self.lambdas
+        print ""
 
 def get_random_CP_tensor(dim, rank):
     """ Generates a random CP tensor of the specified rank and dimensions.
@@ -123,3 +156,14 @@ def get_random_CP_tensor(dim, rank):
     # TODO: is this normalization most suited?
     factors = [f / np.linalg.norm(f) for f in factors]
     return CPTensor(factors)
+
+def get_random_CP_tensor_operator(dim, rank):
+    """ Generates a random CP tensor of the specified rank and dimensions.
+    Each generated factor matrix is unit-norm.
+    """
+    factors = [np.random.rand(d[0], d[1], rank) for d in dim]
+    return CPTensorOperator(factors)
+
+def get_identity_tensor_operator(dim):
+    factors = [np.eye(d).reshape(d,d,1) for d in dim]
+    return CPTensorOperator(factors)
