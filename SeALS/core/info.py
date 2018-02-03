@@ -38,6 +38,7 @@ class ALSOptions:
             verbose=False, debugging=False):
         self.accuracy = accuracy
         self.n_iter_max = n_iter_max
+        self.max_rank = max_rank
         self.tol_error_dec = tol_error_dec
         self.alpha = alpha
         assert error_type == 'average' or error_type == 'total', \
