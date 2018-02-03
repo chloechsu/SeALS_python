@@ -46,9 +46,9 @@ class Compressor:
         if initial_guess is None:
             F = get_random_CP_tensor(G.dim, 1)
         else:
+            F = initial_guess
             assert np.array_equal(F.dim, G.dim), \
                     "Dimensions do not match"
-            F = initial_guess
 
         info = SolverInfo()
 
