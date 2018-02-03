@@ -1,5 +1,5 @@
 import unittest
-from tensors.cp_tensor import get_random_CP_tensor, CPTensor, CPTensorOperator
+from tensors.cp_tensor import get_random_CP_tensor, get_identity_tensor_operator, CPTensor, CPTensorOperator
 import numpy as np
 import tensorly as tl
 from tensorly.decomposition import parafac
@@ -57,6 +57,15 @@ class TestCPTensorMethods(unittest.TestCase):
                     self.assertAlmostEqual(np.linalg.norm(f[:,r]), 1)
             self.assertArrayAlmostEqual(G_copy, G.get_full_tensor())
 
+    def test_distribute_lambda(self, repeats=10):
+        for t in xrange(repeats):
+            dim, rank = self.get_random_dim_and_rank()
+            G = get_random_CP_tensor(dim, rank)
+            G_copy = np.copy(G.get_full_tensor())
+            G.distribute_lambda()
+            self.assertTrue(np.array_equal(G.lambdas, np.ones(G.rank)))
+            self.assertArrayAlmostEqual(G_copy, G.get_full_tensor())
+
     def test_arrange(self, repeats=10):
         for t in xrange(repeats):
             dim, rank = self.get_random_dim_and_rank()
@@ -105,11 +114,23 @@ class TestCPTensorMethods(unittest.TestCase):
             self.assertArrayAlmostEqual(op_mult_B,
                     op.multiply(B).get_full_tensor())
 
+    def test_get_identity_tensor_operator(self, repeats=10):
+        for t in xrange(repeats):
+            dim, rank = self.get_random_dim_and_rank()
+            G = get_random_CP_tensor(dim, rank)
+            identity = get_identity_tensor_operator(dim)
+            G_ = identity.multiply(G)
+            self.assertArrayAlmostEqual(G.get_full_tensor(),
+                    G_.get_full_tensor())
+
     def runTest(self):
         self.test_get_random_CP_tensor()
         self.test_get_full_tensor()
         self.test_norm()
         self.test_normalize()
+        self.test_distribute_lambda()
         self.test_arrange()
         self.test_plus()
         self.test_minus()
+        self.test_multiply()
+        self.test_get_identity_tensor_operator()
