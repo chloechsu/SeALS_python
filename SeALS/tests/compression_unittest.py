@@ -30,15 +30,12 @@ class TestCompression(unittest.TestCase):
             opts = ALSOptions(accuracy=accuracy, tol_error_dec=1e-2)
             c = Compressor(opts)
             F, info = c.compress(G_plus_G)
-            if info.ill_conditioned:
-                # retry if the matrix becomes ill-conditioned during ALS
-                t -= 1
-                continue
-            self.assertLessEqual(F.minus(G_plus_G).norm() / G_plus_G.norm(), 
+            if info.success:
+                self.assertLessEqual(F.minus(G_plus_G).norm() / G_plus_G.norm(), 
                     accuracy)
-            self.assertLessEqual(F.rank, 2 * G.rank)
-            if F.rank == G.rank:
-                success_rate += 1.0 / repeats
+                self.assertLessEqual(F.rank, 2 * G.rank)
+                if F.rank <= G.rank:
+                    success_rate += 1.0 / repeats
         self.assertGreater(success_rate, 0.5)
 
 
