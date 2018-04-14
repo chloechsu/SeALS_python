@@ -23,17 +23,19 @@ def error(A, F, G, error_type):
 
 class Solver:
     """
-    Solve AF = G for CP tensors by ALS.
-    The algorithm is described in Beylkin and Mohlenkamp 2005.
+    Solve AF = G for CP tensors by ALS or SeALS.
+    The ALS algorithm is described in Beylkin and Mohlenkamp 2005.
+    The SeALS algorithm is described in Stefansson and Leong 2016.
     
     Parameters
     ----------
     options : an instance of ALSOptions
     """
 
-    def __init__(self, options):
+    def __init__(self, options, use_SeALS=False):
         assert isinstance(options, ALSOptions), "must intialize with ALSOptions"
         self.options = options
+        self.use_SeALS = use_SeALS
 
     def solve(self, A, G, initial_guess=None):
         """
@@ -54,8 +56,6 @@ class Solver:
         info : SolverInfo
             Gives additional info about the run
         """
-        A_ = deepcopy(A)
-        G_ = deepcopy(G)
         assert isinstance(A, CPTensorOperator)
         assert isinstance(G, CPTensor)
         assert np.array_equal([d[0] for d in A.dim], [d[1] for d in A.dim]), \
@@ -72,50 +72,111 @@ class Solver:
         # TODO: implement equivalent for F = fixsigns(F) in the MATLAB code?
 
         info = SolverInfo()
+        info.errors.append(error(A, F, G, self.options.error_type))
+        info.F_cond.append(np.linalg.norm(F.lambdas) / F.norm())
 
         AA, AG = self.compute_inner_products(A, G)
 
+        # initialize the number of oscilizations (increasing error) for SeALS
+        n_osc = 0
+        # initialize saved F for SeALS
+        F_saved = CPTensor([])
+
+        # In each iteration, do the following:
+        # 1. compute current error and log
+        # 2. if the error is within target accuracy, return
+        # 3. if error decreases less than tol_error_dec, increase the rank of F
+        #   3.1 if F is already at max_rank, can't increase so return
+        #   3.2 to increase the rank of F, add a new preconditioned rank1 tensor
+        # 4. do one iteration of alternating gradient descents 
+        #    (by calling ALS_least_squares_onestep)
+        # 5.
+        #   5A (ALS without the SeALS variant)
+        #       if the matrix is ill conditioned in 4, return previous F
+        #   5B (SeALS)
+        #       if the matrix is ill conditioned in 4, or if n_osc reaches
+        #       tol_osc, save F and restart ALS with a new preconditoned rank 1
+        #       tensor as F
         for info.n_iter in xrange(self.options.n_iter_max):
-            F.arrange()
-            info.F_cond.append(np.linalg.norm(F.lambdas) / F.norm())
-            info.errors.append(error(A, F, G, self.options.error_type))
+
+            if info.errors[-1] <= self.options.accuracy:
+                info.success = True
+                return F.plus(F_saved), info
+
             if self.options.verbose:
                 print "error = %2.9f, rank(F) = %d, starting iteration %d.." % \
                 (info.errors[-1], F.rank, info.n_iter)
 
-            if info.errors[-1] <= self.options.accuracy:
-                info.success = True
-                return F, info
+            F.arrange()
             
-            # Increase rank if error decreases less than tol_error_dec
-            if info.n_iter >= 1 and \
-                    (info.errors[-1] - info.errors[-2]) / info.errors[-2] < \
-                    self.options.tol_error_dec:
-
-                if F.rank >= self.options.max_rank:
-                    return F, info
-
-                info.iter_with_rank_inc.append(info.n_iter) 
-                if self.options.verbose:
-                    print "Increasing rank of F at iteration %d" % info.n_iter
-
-                # Precondition a new rank 1 tensor and add to F
-                F = F.plus(self.get_preconditioned_rank1_tensor(A,
-                    G.minus(A.multiply(F))))
-                F.arrange()
-                # TODO: fixsigns??
+            flag_SeALS_restart = False
 
             try:
                 start_time = time.clock()
                 F = self.ALS_least_squares_onestep(A, G, F, AA, AG)
                 info.t_step.append(time.clock() - start_time)
             except NumericalError:
-                print "ALS matrix inversion ill-conditioned, returning after \
-                    iteration %d" % info.n_iter
-                info.ill_conditioned = True
-                return F, info
+                if not self.use_SeALS:
+                    print "ALS matrix inversion ill-conditioned, returning after \
+                        iteration %d" % info.n_iter
+                    info.ill_conditioned = True
+                    return F, info
+                flag_SeALS_restart = True
 
-        return G, info
+            info.F_cond.append(np.linalg.norm(F.lambdas) / F.norm())
+            info.errors.append(error(A, F, G, self.options.error_type))
+
+            if info.errors[-1] > info.errors[-2]:
+                n_osc = n_osc + 1
+                if self.use_SeALS and n_osc > self.options.tol_osc: 
+                    flag_SeALS_restart = True
+
+            # if error decreases less than tol_error_dec,
+            # Increase rank of F by adding a preconditioned rank 1 tensor
+            error_dec = (info.errors[-2] - info.errors[-1]) / info.errors[-2]
+            if error_dec < self.options.tol_error_dec:
+                # check we are not exceeding max rank
+                if F_saved.rank + F.rank >= self.options.max_rank:
+                    if len(info.restarts) > 0:
+                        print info.restarts
+                    return F.plus(F_saved), info
+                if self.use_SeALS and F.rank >= self.options.tol_rank_restart:
+                    flag_SeALS_restart = True
+                    
+                # add a precondtioned rank 1 tensor to F
+                if not flag_SeALS_restart:
+                    info.iter_with_rank_inc.append(info.n_iter) 
+                    if self.options.verbose:
+                        print "Increasing rank of F at iteration %d" % info.n_iter
+
+                    F = F.plus(self.get_preconditioned_rank1_tensor(A,
+                        G.minus(A.multiply(F))))
+                    # TODO: implement the python equivalent of fixsigns in MATLAB??
+
+            # if the ALS matrix inversion is ill conditioned or if n_osc exceeds
+            # tol_osc, restart ALS with a new preconditioned rank 1 tensor
+            if self.use_SeALS and flag_SeALS_restart: 
+                info.restarts.append(info.n_iter) # logging
+                n_osc = 0 # reset n_osc
+                F_saved = F.plus(F_saved)
+                # if the smallest normalization constant divided by the
+                # largest normalization constant is small enough, return
+                # TODO: I just copied this criterion from MATLAB but I don't
+                # really understand why the threshold is the sqrt of accuracy
+                if F_saved.rank >= max_rank or \
+                        F_saved.getNormalizationRatio() < \
+                        np.sqrt(self.options.accuracy):
+                    if len(info.restarts) > 0:
+                        print info.restarts
+                    return F_saved, info
+                # update G
+                G = G.minus(A.multiply(F))
+                F = self.get_preconditioned_rank1_tensor(A, G)
+                AA, AG = self.compute_inner_products(A, G)
+
+        if len(info.restarts) > 0:
+            print info.restarts
+        return F.plus(F_saved), info
     
     def ALS_least_squares_onestep(self, A, G, F, AA, AG):
         """ A single iteration of the ALS least squares algorithm.
