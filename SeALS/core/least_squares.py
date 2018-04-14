@@ -30,6 +30,7 @@ class Solver:
     Parameters
     ----------
     options : an instance of ALSOptions
+    use_SeALS : whether use the unmodified ALS algorithm or SeALS
     """
 
     def __init__(self, options, use_SeALS=False):
