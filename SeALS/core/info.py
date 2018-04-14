@@ -11,6 +11,8 @@ class ALSOptions:
         max number of iterations
     max_rank : int, optional, default is 30
         max tolerated rank for F
+        if using SeALS, this is the max tolerated rank before restarting ALS,
+        not the max rank of the final F
     tol_error_dec : float, optional, default is 1e-3
         minimum decrease for error
         (the compressor adds rank when error decrease is below this threshold)
@@ -21,13 +23,19 @@ class ALSOptions:
     debugging : bool, optional, default is false
         whether to store additional debugging info
 
-    Only for least squares solver:
+    For least squares solver:
 
+    -- for preconditioning the new rank 1 tensor to add when increasing rank --
     error_type : 'average' or 'total', optional, default is point average
     tol_error_dec_precond : float, optional, default is 1e-2
         tolerated decrease for precondition
     n_iter_max_precond : int, optional, default is 15
         maximum number of tolerated iterations for preconodition
+
+    -- for the SeALS version only --
+    tol_osc : maximum number of tolerated of oscillation (error increases after
+    an iteration), restart with new F when max_osc is reached
+    tol_rank_restart : max tolerated rank of F before saving F and restarting ALS
 
     """
 
@@ -35,6 +43,7 @@ class ALSOptions:
             max_rank=30, tol_error_dec=1e-3, alpha=1e-12,
             error_type='average', 
             tol_error_dec_precond=1e-2, n_iter_max_precond=15,
+            tol_osc=10, tol_rank_restart=30,
             verbose=False, debugging=False):
         self.accuracy = accuracy
         self.n_iter_max = n_iter_max
@@ -46,13 +55,25 @@ class ALSOptions:
         self.error_type = error_type
         self.tol_error_dec_precond = tol_error_dec_precond
         self.n_iter_max_precond = n_iter_max_precond
+        self.tol_osc = tol_osc
+        self.tol_rank_restart = tol_rank_restart
         self.verbose = verbose
         self.debugging = debugging
 
     def get_params(self, **kwargs):
         """ Returns a dictionary of parameters. """
-        params = ['n_iter_max', 'tol_error_dec', 'alpha', 
-                'display_progress', 'verbose', 'debugging']
+        params = [ 'accuracy',
+                'n_iter_max', 
+                'tol_error_dec',
+                'max_rank',
+                'alpha', 
+                'error_type',
+                'tol_error_dec_precond',
+                'n_iter_max_precond',
+                'tol_osc',
+                'tol_rank_restart',
+                'verbose',
+                'debugging']
         return {param_name: getattr(self, param_name) for param_name in params}
 
     def set_params(self, **params):
@@ -88,6 +109,10 @@ class SolverInfo:
     B_record : list of ALS matrix G in each iteration
     b_record : list of RHS vector b in each iteration
 
+    Only for SeALS:
+
+    restarts : list of iterations when F is incorporated in G and ALS restarts
+
     """
     def __init__(self):
         """ For both compression and least squares solver:
@@ -111,3 +136,8 @@ class SolverInfo:
         self.B_record = []
         # all RHS vector b in each iteration
         self.b_record = []
+
+        """ Only for SeALS:
+        """
+        # iteration indices when ALS restarts
+        self.restarts = []
