@@ -118,8 +118,7 @@ class Solver:
                 info.t_step.append(time.clock() - start_time)
             except NumericalError:
                 if not self.use_SeALS:
-                    print "ALS matrix inversion ill-conditioned, returning after \
-                        iteration %d" % info.n_iter
+                    print "ill-conditioned after iteration %d" % info.n_iter
                     info.ill_conditioned = True
                     return F, info
                 flag_SeALS_restart = True
@@ -134,12 +133,13 @@ class Solver:
 
             # if error decreases less than tol_error_dec,
             # Increase rank of F by adding a preconditioned rank 1 tensor
-            error_dec = (info.errors[-2] - info.errors[-1]) / info.errors[-2]
-            if error_dec < self.options.tol_error_dec:
+            res_dec = np.abs(info.errors[-2] - info.errors[-1]) / info.errors[-2]
+            if res_dec < self.options.tol_error_dec:
                 # check we are not exceeding max rank
                 if F_saved.rank + F.rank >= self.options.max_rank:
                     if len(info.restarts) > 0:
                         print info.restarts
+                    print "achieved max rank after iteration %d" % info.n_iter
                     return F.plus(F_saved), info
                 if self.use_SeALS and F.rank >= self.options.tol_rank_restart:
                     flag_SeALS_restart = True
@@ -164,16 +164,20 @@ class Solver:
                 # largest normalization constant is small enough, return
                 # TODO: I just copied this criterion from MATLAB but I don't
                 # really understand why the threshold is the sqrt of accuracy
-                if F_saved.rank >= max_rank or \
+                if F_saved.rank >= self.options.max_rank or \
                         F_saved.getNormalizationRatio() < \
                         np.sqrt(self.options.accuracy):
                     if len(info.restarts) > 0:
                         print info.restarts
+                    print "achieved max rank after iteration %d" % info.n_iter
                     return F_saved, info
                 # update G
                 G = G.minus(A.multiply(F))
                 F = self.get_preconditioned_rank1_tensor(A, G)
                 AA, AG = self.compute_inner_products(A, G)
+        
+            # update the current error since we might have changed F
+            info.errors[-1] = error(A, F, G, self.options.error_type)
 
         if len(info.restarts) > 0:
             print info.restarts
@@ -235,13 +239,16 @@ class Solver:
 
             # TODO: record B and b for debugging
             
+            if np.linalg.cond(B) > 1.0 / np.finfo(float).eps:
+                raise NumericalError("B is ill-conditioned")
             try:
                 u = np.linalg.solve(B, b)
             except np.linalg.LinAlgError:
-                raise NumericalError("B is singular or square")
+                raise NumericalError("B is ill-conditioned")
             
             F.factors[k] = u.reshape(F.rank, F.dim[k]).transpose()
 
+        F.arrange()
         # TODO: fixsigns???
         return F
 
