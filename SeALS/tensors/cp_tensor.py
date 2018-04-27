@@ -63,8 +63,9 @@ class CPTensor:
         for i in xrange(len(self.factors)):
             scale = np.linalg.norm(self.factors[i], axis=0)
             self.lambdas = self.lambdas * scale
-            self.factors[i] = np.nan_to_num(
-                    self.factors[i] / scale.reshape(1,-1))
+            # avoid division by 0 (those lambdas = 0 by the line above)
+            scale[scale == 0] = 1.0
+            self.factors[i] = self.factors[i] / scale.reshape(1,-1)
 
     def distribute_lambda(self):
         """ Distributes the lambdas evenly across all factors.
